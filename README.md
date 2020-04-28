@@ -26,23 +26,23 @@ return [ret]
 to 
 ```
 if self.training:
-return [ret]
+    return [ret]
 else:
-hm = ret['hm'].sigmoid_()
+    hm = ret['hm'].sigmoid_()
 
-hmax = nn.functional.max_pool2d(hm, (3, 3), stride=1, padding=1)
-keep = (hmax == hm).float()
-hm = hm * keep
+    hmax = nn.functional.max_pool2d(hm, (3, 3), stride=1, padding=1)
+    keep = (hmax == hm).float()
+    hm = hm * keep
 
-return hm, ret['wh'], ret['reg']
+    return hm, ret['wh'], ret['reg']
 ```
 modify the  function `process`  in `src/lib/detectors/ctdet.py`:
 ```
 with torch.no_grad():
-hm, wh, reg = self.model(images)
+    hm, wh, reg = self.model(images)
 
-torch.onnx.export(self.model, images, "ctdet-resdcn18.onnx", opset_version=9, verbose=False, output_names=["hm", "wh", "reg"])
-quit()
+    torch.onnx.export(self.model, images, "ctdet-resdcn18.onnx", opset_version=9, verbose=False, output_names=["hm", "wh", "reg"])
+    quit()
 ```
 to obtain the onnx file, run the command:
 ```
