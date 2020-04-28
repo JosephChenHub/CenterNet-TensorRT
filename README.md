@@ -44,7 +44,9 @@ with torch.no_grad():
     torch.onnx.export(self.model, images, "ctdet-resdcn18.onnx", opset_version=9, verbose=False, output_names=["hm", "wh", "reg"])
     quit()
 ```
-to obtain the onnx file, run the command:
+and replace the `CenterNet/src/lib/models/networks/DCNv2` with `DCNv2`.
+
+To obtain the onnx file, run the command:
 ```
  cd CenterNet/src &&\
  python3 demo.py ctdet --arch resdcn_18 --demo xxxxx.jpg --load_model ../models/ctdet_coco_resdcn18.pth --debug 4 --exp_id 1
