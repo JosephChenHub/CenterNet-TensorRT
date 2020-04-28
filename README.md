@@ -1,7 +1,12 @@
 
 This is a C++ implementation of CenterNet using TensorRT and CUDA. Thanks for the official implementation of [CenterNet](https://github.com/xingyizhou/CenterNet)!
 
+![sample1](det_out/det_16004479832_a748d55f21_k.jpg)
+
+![sample2](det_out/det_17790319373_bd19b24cfc_k.jpg)
+
 # Dependencies:
+- Ubuntu 16.04
 - CUDA 10.0 [required]
 - TensorRT-7.0.0.11 (for CUDA10.0) [required]
 - CUDNN (for CUDA10.0, may not be used) [required]
