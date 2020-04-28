@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: onnx-tensorrt
+Version: 0.1.0
+Summary: TensorRT backend for ONNX
+Home-page: https://github.com/onnx/onnx-tensorrt
+Author: NVIDIA Corporation
+Author-email: bbarsdell@nvidia.com
+License: UNKNOWN
+Description: UNKNOWN
+Platform: UNKNOWN

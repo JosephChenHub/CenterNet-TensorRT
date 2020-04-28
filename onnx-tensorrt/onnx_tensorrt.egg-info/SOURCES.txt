@@ -1,0 +1,14 @@
+README.md
+nv_onnx_parser_bindings.i
+setup.py
+onnx_tensorrt/__init__.py
+onnx_tensorrt/backend.py
+onnx_tensorrt/config.py
+onnx_tensorrt/tensorrt_engine.py
+onnx_tensorrt.egg-info/PKG-INFO
+onnx_tensorrt.egg-info/SOURCES.txt
+onnx_tensorrt.egg-info/dependency_links.txt
+onnx_tensorrt.egg-info/requires.txt
+onnx_tensorrt.egg-info/top_level.txt
+onnx_tensorrt/parser/__init__.py
+onnx_tensorrt/runtime/__init__.py
