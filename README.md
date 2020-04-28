@@ -7,6 +7,7 @@ This is a C++ implementation of CenterNet using TensorRT and CUDA. Thanks for th
 
 # Dependencies:
 - Ubuntu 16.04
+- PyTorch 1.2.0 (for the compatibility of TensorRT 5 in Jetson Tx2)
 - CUDA 10.0 [required]
 - TensorRT-7.0.0.11 (for CUDA10.0) [required]
 - CUDNN (for CUDA10.0, may not be used) [required]
