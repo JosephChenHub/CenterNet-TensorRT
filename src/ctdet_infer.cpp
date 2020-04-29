@@ -10,7 +10,7 @@
 #include "dcn_v2.hpp" //! DCN plugin
 
 #include "gpu_sort.hpp"
-#include "ctdet_kernels.hpp"
+#include "det_kernels.hpp"
 
 using namespace std;
 using namespace cv;
@@ -174,7 +174,7 @@ int main(int argc, char* argv[]) {
             buffers[hm], d_indices, 
             d_inv_trans,  
             batch_num, 80, 128, 128, K, 
-            80, 0.3, true, false, stream);
+            0.3, true, false, stream);
     CHECK_CUDA(cudaMemcpyAsync(h_det, d_det, sizeof(float) * (K*6*batch_num+1), cudaMemcpyDeviceToHost, stream));
     cudaStreamSynchronize(stream);
     //cudaDeviceSynchronize();

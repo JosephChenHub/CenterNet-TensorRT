@@ -3,7 +3,7 @@
  * 
  */
 #include <math.h>
-#include "ctdet_kernels.hpp"
+#include "det_kernels.hpp"
 #include <iostream>
 
 #include "gpu_common.cuh"

@@ -674,10 +674,9 @@ __global__ void ctdet_decode_kernel(
         const size_t block_var_num, const int K, 
         const int height, const int width, 
         const bool reg_exist, 
-        const int num_classes, const float thresh
+        const int num_joints, const float thresh
         ) {
     const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-    if (threadIdx.x == 0) printf("id:%d, score:%.2f\n", tid, scores[tid]);
     if (tid >= batch_num * K) return;
     if (scores[tid] < thresh) return;  //no nms, directly using threshold
 
@@ -686,11 +685,12 @@ __global__ void ctdet_decode_kernel(
     const size_t local_id = tid % K;
 
     const size_t iid = slice_blocks_num * block_var_num * batch_id + local_id;
+    const int batch_len = 1 + 6 * K;  
     
     size_t class_id = indices[iid] / area;
     indices[iid] %= area;
 
-    atomicAdd(&det[0], 1.0);
+    atomicAdd(&det[batch_id * batch_len], 1.0);
 
     float bias = 0.;
     float xs, ys;
@@ -721,36 +721,137 @@ __global__ void ctdet_decode_kernel(
     tt3 = trans[3] * t2 + trans[4] * t3 + trans[5];
 
     //printf("id:%d, score:%.4f, cls:%d, box:(%.1f, %.1f, %.1f, %.1f)\n", tid,  scores[tid], class_id, tt0, tt1, tt2, tt3);
-    /// det: NxKx6+1
+    /// det: N* (1 + 6*K)
     
-    det[batch_id * K * 6 + local_id * 6 + 0 + 1] = class_id;
-    det[batch_id * K * 6 + local_id * 6 + 1 + 1] = scores[tid];
-    det[batch_id * K * 6 + local_id * 6 + 2 + 1] = tt0;
-    det[batch_id * K * 6 + local_id * 6 + 3 + 1] = tt1;
-    det[batch_id * K * 6 + local_id * 6 + 4 + 1] = tt2;
-    det[batch_id * K * 6 + local_id * 6 + 5 + 1] = tt3;
+    det[batch_id * batch_len + local_id * 6 + 0 + 1] = class_id;
+    det[batch_id * batch_len + local_id * 6 + 1 + 1] = scores[tid];
+    det[batch_id * batch_len + local_id * 6 + 2 + 1] = tt0;
+    det[batch_id * batch_len + local_id * 6 + 3 + 1] = tt1;
+    det[batch_id * batch_len + local_id * 6 + 4 + 1] = tt2;
+    det[batch_id * batch_len + local_id * 6 + 5 + 1] = tt3;
 
 }
 
-/// heat: NxCxHxW, indices: NxCxHxW (topk), classes: NxK, ys: NxK, xs: NxK
+__global__ void pose_decode_kernel(
+        float* det, 
+        float* scores, size_t* indices, float* wh, float* reg,  
+        float* hps, float* hm_hp, size_t* hm_ind, 
+        float* hp_offset, 
+        float* trans,
+        const int batch_num, const size_t slice_blocks_num, 
+        const size_t block_var_num, const int K, 
+        const int height, const int width, 
+        const bool reg_exist, const bool hm_hp_exist, 
+        const int num_joints, const float thresh
+        ) {
+    const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid >= batch_num * K) return;
+    if (scores[tid] < thresh) return;  //! no nms, directly using threshold
+
+    const int res_num = 2 + 4 + num_joints * 2;
+    const int batch_len = (1 + res_num * K);
+
+    const size_t area  = height * width;
+    const size_t batch_id = tid / K;
+    const size_t local_id = tid % K;
+    atomicAdd(&det[batch_id * batch_len], 1.0); //! number of det
+
+    const size_t iid = slice_blocks_num * block_var_num * batch_id + local_id;
+    
+    size_t class_id = indices[iid] / area;
+    indices[iid] %= area;
+
+    float xs, ys;
+    float p0, p1;
+    float t0, t1, t2, t3;
+    float tt0, tt1, tt2, tt3;
+    float bias[2];
+    ys = static_cast<size_t>(indices[iid] / width) * 1.0;
+    xs = static_cast<size_t>(indices[iid] % width) * 1.0;
+
+    if (reg_exist) { // reg: Nx2xHxW -> Nx2xK
+        bias[0] = reg[batch_id*2*area + indices[iid]];
+        bias[1] = reg[batch_id*2*area + area + indices[iid]];
+    } else {
+        bias[0] = 0.5; bias[1] = 0.5;
+    }
+    float wh1 = wh[batch_id*2*area + indices[iid]] / 2.0;
+    float wh2 = wh[batch_id*2*area + area + indices[iid]] / 2.0;
+
+    t0 = xs - wh1 + bias[0];
+    t1 = ys - wh2 + bias[1];
+    t2 = xs + wh1 + bias[0];
+    t3 = ys + wh2 + bias[1];
+
+    /// inverse-warpAffine
+    tt0 = trans[0] * t0 + trans[1] * t1 + trans[2]; 
+    tt1 = trans[3] * t0 + trans[4] * t1 + trans[5];
+    tt2 = trans[0] * t2 + trans[1] * t3 + trans[2];
+    tt3 = trans[3] * t2 + trans[4] * t3 + trans[5];
+    det[batch_id * batch_len + local_id * res_num + 0 + 1] = class_id;
+    det[batch_id * batch_len + local_id * res_num + 1 + 1] = scores[tid];
+    det[batch_id * batch_len + local_id * res_num + 2 + 1] = tt0;
+    det[batch_id * batch_len + local_id * res_num + 3 + 1] = tt1;
+    det[batch_id * batch_len + local_id * res_num + 4 + 1] = tt2;
+    det[batch_id * batch_len + local_id * res_num + 5 + 1] = tt3;
+
+    /// key points
+    for(int i = 0; i < num_joints; ++i) {
+        p0 = hps[batch_id*num_joints*2*area + i*2*area + indices[iid]] + xs;
+        p1 = hps[batch_id*num_joints*2*area + (i*2+1)*area + indices[iid]] + ys;
+        
+        /// find the most closed point with a confidence > 0.1 
+        if (hm_hp_exist) {
+            float min_ds = static_cast<float>(INT_MAX);
+            float near_xs = min_ds, near_ys = min_ds;
+
+            // hm_hp: N x 17 x 128 x 128 
+            float hm_hp_score, diff = min_ds;
+            float hm_xs, hm_ys;
+            size_t ind_tmp;
+            for(int j = 0; j < K; ++j) {
+                hm_hp_score = hm_hp[batch_id * num_joints * area + i * area + j];
+                if (hm_hp_score < 0.1)  continue;
+                ind_tmp = hm_ind[batch_id*num_joints*area + i * area + j] % area;
+                hm_ys = static_cast<size_t>(ind_tmp / width) * 1.0 + hp_offset[batch_id*2*area + area + j];
+                hm_xs = static_cast<size_t>(ind_tmp % width) * 1.0 + hp_offset[batch_id*2*area + j];
+                diff = fabs(p0 - hm_xs) + fabs(p1 - hm_ys);
+                if (diff < min_ds) {
+                    min_ds = diff;
+                    near_xs = hm_xs;
+                    near_ys = hm_ys;
+                }
+            }
+            if (near_xs > t0 && near_xs < t2 && near_ys > t1 &&
+                    near_ys < t3 && diff < max(t2-t0, t3-t1) * 0.5) {
+                p0 = near_xs;
+                p1 = near_ys;
+            }
+        }
+        
+        tt0 = trans[0] * p0 + trans[1] * p1 + trans[2];
+        tt1 = trans[3] * p0 + trans[4] * p1 + trans[5];
+
+        det[batch_id * batch_len + local_id * res_num + i*2 + 7] = tt0;
+        det[batch_id * batch_len + local_id * res_num + i*2+1 + 7] = tt1;
+    }
+}
+
 void ctdet_decode(
         float* det,  
         float* wh, float* reg, 
         float* heat, size_t* indices,    
         float* inv_trans, 
-        const int batch_num, const int channel, 
+        const int batch_num, const int num_classes,  
         const int height, const int width, 
-        const int K, const int num_classes,  
-        const float threshold, 
+        const int K, const float threshold, 
         const bool reg_exist, const bool cat_spec_wh,
         cudaStream_t stream) {
 
     ///inplace sort with blocks
-    const size_t slice_len = height * width * channel;
+    const size_t slice_len = height * width * num_classes;
     const size_t padding_len = (slice_len + B_BLOCK_VAR_NUMS - 1) / B_BLOCK_VAR_NUMS * B_BLOCK_VAR_NUMS;
     int num_blocks = padding_len / B_BLOCK_VAR_NUMS * batch_num;  
-
-    CHECK_LAST_ERR("ctdet_bitonic_sort_kernel_before");
 
     bitonicBatchBlockSortIndices<float><<<num_blocks, B_THREADS_PER_BLOCK, 0, stream>>>(heat, indices, batch_num, slice_len, padding_len, false);
     CHECK_LAST_ERR("ctdet_bitonic_sort_kernel");
@@ -758,7 +859,7 @@ void ctdet_decode(
     merge_batch_topk<float>(heat, indices, batch_num, padding_len, K, num_blocks / batch_num, B_BLOCK_VAR_NUMS, stream);
     CHECK_LAST_ERR("ctdet_merge_batch_topk_kernel");
     ///
-    ctdet_decode_kernel<<<divUp(K * batch_num, 256), 256, 0, stream>>>(
+    ctdet_decode_kernel<<<divUp(K * batch_num, 128), 128, 0, stream>>>(
             det, heat, indices, 
             wh, reg, inv_trans,    
             batch_num, num_blocks/batch_num, 
@@ -769,6 +870,57 @@ void ctdet_decode(
 }
 
 
+void multi_pose_decode(
+        float* det,  
+        float* heat, float* wh, float* reg, 
+        float* hps, float* hm_hp, float* hp_offset, 
+        size_t* heat_ind, size_t* hm_ind, 
+        float* inv_trans, 
+        const int batch_num, const int num_joints, 
+        const int height, const int width, 
+        const int K, const float threshold, 
+        const bool reg_exist, const bool hm_hp_exist, 
+        cudaStream_t stream) {
+
+    const size_t area = height * width;
+    const size_t heat_slice_len = area * 1; 
+    const size_t heat_padding_len = (heat_slice_len + B_BLOCK_VAR_NUMS - 1) / B_BLOCK_VAR_NUMS * B_BLOCK_VAR_NUMS;
+    const int heat_num_blocks = heat_padding_len / B_BLOCK_VAR_NUMS * batch_num;  
+
+    const size_t hm_slice_len = area;
+    const size_t hm_padding_len = (area + B_BLOCK_VAR_NUMS-1)/B_BLOCK_VAR_NUMS * B_BLOCK_VAR_NUMS;
+    const int hm_batch_num = batch_num * num_joints;
+    const int hm_num_blocks = hm_padding_len / B_BLOCK_VAR_NUMS * batch_num * num_joints;
+    
+    /// get the Top-K of the heat map
+    bitonicBatchBlockSortIndices<float><<<heat_num_blocks, B_THREADS_PER_BLOCK, 0, stream>>>(heat, heat_ind, batch_num, heat_slice_len, heat_padding_len, false);
+    CHECK_LAST_ERR("heat_bitonic_sort_kernel");
+
+    merge_batch_topk<float>(heat, heat_ind, batch_num, heat_padding_len, K, heat_num_blocks / batch_num, B_BLOCK_VAR_NUMS, stream);
+    CHECK_LAST_ERR("heat_merge_batch_topk_kernel");
+
+    /// get the channel Top-K of hm_hp
+    if (hm_hp_exist) {
+        bitonicBatchBlockSortIndices<float><<<hm_num_blocks, B_THREADS_PER_BLOCK, 0, stream>>>(hm_hp, hm_ind, hm_batch_num, \
+                hm_slice_len, hm_padding_len, false);
+        CHECK_LAST_ERR("hm_bitonic_sort_kernel");
+        merge_batch_topk<float>(hm_hp, hm_ind, hm_batch_num, hm_padding_len, K, hm_num_blocks / hm_batch_num, B_BLOCK_VAR_NUMS, stream);
+        CHECK_LAST_ERR("heat_merge_batch_topk_kernel");
+    }
+
+    /// decode 
+    pose_decode_kernel<<<divUp(K * batch_num, 128), 128, 0, stream>>>(
+            det, heat, heat_ind, 
+            wh, reg, hps, 
+            hm_hp, hm_ind, 
+            hp_offset, inv_trans,    
+            batch_num, heat_num_blocks/batch_num, 
+            B_BLOCK_VAR_NUMS, K, height, width, 
+            reg_exist, hm_hp_exist, 
+            num_joints, threshold);
+
+    CHECK_LAST_ERR("pose_decode_kernel");
+}
 
 template void mergeSort<int>(int* , const size_t , int*,  const bool);
 template void mergeSort<float>(float*, const size_t, float*,  const bool);

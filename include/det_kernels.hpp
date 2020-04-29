@@ -22,7 +22,7 @@ enum class DimType {
  * 1. read image first
  * 2. allocate the gpu mem. of gpu_mat & inp_img
  * 3. affineTransform
- * 4. BGR HWC -> RGB CHW & normalization
+ * 4. HWC -> CHW & normalization, keep BGR format
  */ 
 void cuda_preprocess(const int batch_size,
         float* d_out, 
