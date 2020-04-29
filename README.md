@@ -2,13 +2,13 @@
 This is a C++ implementation of CenterNet using TensorRT and CUDA. Thanks for the official implementation of [CenterNet (Objects as Points)](https://github.com/xingyizhou/CenterNet)!
 
 <p align="center">
- <img src="det_out/det_16004479832_a748d55f21_k.jpg" align="center" height="230px">
- <img src="det_out/det_17790319373_bd19b24cfc_k.jpg" align="center" height="230px">
+ <img src="det_out/det_16004479832_a748d55f21_k.jpg" align="center" height="230px" width="400px">
+ <img src="det_out/det_17790319373_bd19b24cfc_k.jpg" align="center" height="230px" width="400px">
 </p>
 
 <p align="center">
- <img src="det_out/pose_33823288584_1d21cf0a26_k.jpg" align="center" height="230px">
- <img src="det_out/pose_17790319373_bd19b24cfc_k.jpg" align="center" height="230px">
+ <img src="det_out/pose_33823288584_1d21cf0a26_k.jpg" align="center" height="230px" width="400px">
+ <img src="det_out/pose_17790319373_bd19b24cfc_k.jpg" align="center" height="230px" width="400px">
 </p>
 
 
