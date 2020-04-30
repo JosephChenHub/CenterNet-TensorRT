@@ -1,11 +1,7 @@
 #pragma once
 
 
-template <typename T>
-void mergeSort(T* in, const size_t num, T* buff, const bool up=true);
 
-template <typename T>
-void bitonicSort(T* in, const size_t num, T* buff, const bool ascending=true);
 
 
 template <typename T>

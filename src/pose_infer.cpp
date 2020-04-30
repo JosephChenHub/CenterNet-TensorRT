@@ -113,7 +113,6 @@ int main(int argc, char* argv[]) {
 
     /// memory allocation
 
-    float* out;
     string img_name(argv[2]);
     Mat img = imread(img_name);
     assert (img.data != NULL);
@@ -162,7 +161,6 @@ int main(int argc, char* argv[]) {
     CHECK_CUDA(cudaMalloc((void**)&d_std, sizeof(float)*3));
     CHECK_CUDA(cudaMemcpy(d_mean, mean.data(), sizeof(float)*3, cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_std, std.data(), sizeof(float)*3, cudaMemcpyHostToDevice));
-    const float w_shift[2] = {0., 0.};
     float* d_inv_trans;
     float* h_inv_trans;
     cudaMallocHost((void**)&h_inv_trans, sizeof(float)*6);
@@ -182,7 +180,7 @@ int main(int argc, char* argv[]) {
 
     CHECK_CUDA(cudaMemcpyAsync(d_inv_trans, h_inv_trans, sizeof(float)*6, cudaMemcpyHostToDevice, stream));
     cout << " starting inference ... " << endl;
-    context->enqueue(1, (void**)buffers, stream, nullptr);
+    context->enqueue(batch_num, (void**)buffers, stream, nullptr);
 
     /// decode the detection's result
     multi_pose_decode(d_det, 

@@ -32,7 +32,7 @@ set(CMAKE_BUILD_TYPE "Release")
 
 set(USE_LIBTORCH OFF)
 set(USE_OPENCV ON)
-set(BUILD_GTEST OFF)
+set(BUILD_GTEST ON)
 set(USE_TENSORRT ON)
 
 
@@ -125,7 +125,12 @@ endif(USE_OPENCV)
 include_directories(${TENSORRT_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
 
 # CUDA
-list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda --expt-relaxed-constexpr -std=c++11 -g -G")
+if (CMAKE_BUILD_TYPE MATCHES "Debug")
+    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda --expt-relaxed-constexpr -std=c++11 -g -G")
+else(CMAKE_BUILD_TYPE "Release")
+    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda --expt-relaxed-constexpr -std=c++11 -O2")
+endif()
+
 CUDA_INCLUDE_DIRECTORIES(${CUDNN_INCLUDE_DIR} ${TENSORRT_INCLUDE_DIR})
 CUDA_ADD_LIBRARY(cu_lib SHARED ${CU_SOURCES})
 target_link_libraries(cu_lib ${OpenCV_LIBS})

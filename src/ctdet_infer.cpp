@@ -6,6 +6,8 @@
 #include <NvInfer.h>
 #include <cassert>
 
+#include <cuda_profiler_api.h> 
+
 #include "common/logger.h"
 #include "dcn_v2.hpp" //! DCN plugin
 
@@ -57,74 +59,15 @@ vector<cv::Scalar> colors(80);
 
 
 int main(int argc, char* argv[]) {
-    string trt_file(argv[1]);
-
     CHECK_CUDA(cudaSetDevice(0));
     cudaStream_t stream;
     CHECK_CUDA(cudaStreamCreate(&stream));
+    CHECK_CUDA(cudaProfilerStart());
 
-    float* out;
-    string img_name(argv[2]);
-    Mat img = imread(img_name);
-    assert (img.data != NULL);
-
-    const int batch_num = 1;
-    const int num_classes = 80;
-    const int K = 100;
-
-    uint8_t* d_in;
-    float* buffers[4];
-    size_t* d_indices;
-    float* d_det;
-    float* h_det;
-
-    cv::RNG rng(time(0));
-    for (int  i = 0; i < 80; ++i) {
-        colors[i] = cv::Scalar(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
-    }
-    CHECK_CUDA(cudaMallocHost((void**)&h_det, sizeof(float) * (K*6*batch_num+1)));
-    CHECK_CUDA(cudaMalloc((void**)&d_det, sizeof(float) * (K * 6 * batch_num+1)));
-    CHECK_CUDA(cudaMalloc((void**)&d_in, sizeof(uint8_t) * 512 * 512*3));
-    CHECK_CUDA(cudaMalloc((void**)&buffers[0], sizeof(float) * 512 * 512*3));
-    CHECK_CUDA(cudaMalloc((void**)&buffers[1], sizeof(float) *128*128*2));
-    CHECK_CUDA(cudaMalloc((void**)&buffers[2], sizeof(float) *128*128*2));
-    CHECK_CUDA(cudaMalloc((void**)&buffers[3], sizeof(float) *128*128*80));
-    CHECK_CUDA(cudaMalloc((void**)&d_indices, sizeof(size_t) * 128 * 128 * 80));
-    CHECK_CUDA(cudaMemset(d_det, 0, sizeof(float)));
-    Mat inp_img(512, 512, CV_8UC3);
-
-    float* d_mean;
-    float* d_std;
-    vector<float> mean {0.408, 0.447, 0.470}; // BGR mode
-    vector<float> std {0.289, 0.274, 0.278};
-    CHECK_CUDA(cudaMalloc((void**)&d_mean, sizeof(float)*3));
-    CHECK_CUDA(cudaMalloc((void**)&d_std, sizeof(float)*3));
-    CHECK_CUDA(cudaMemcpy(d_mean, mean.data(), sizeof(float)*3, cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_std, std.data(), sizeof(float)*3, cudaMemcpyHostToDevice));
-    const float w_shift[2] = {0., 0.};
-    float* d_inv_trans;
-    float* h_inv_trans;
-    cudaMallocHost((void**)&h_inv_trans, sizeof(float)*6);
-    CHECK_CUDA(cudaMalloc((void**)&d_inv_trans, sizeof(float)*6));
-
-    cuda_preprocess(1, 
-            buffers[0], d_in, img, inp_img, 
-            512, 512,  
-            1., 31, true, 4.0, 
-            h_inv_trans,  
-            d_mean, true,
-            d_std, true,
-            stream);
-    //cout << "inv_trans:\n";
-    //for(int i = 0; i < 6; ++i) cout << h_inv_trans[i] << " ";
-    //cout << endl;
-
-    CHECK_CUDA(cudaMemcpyAsync(d_inv_trans, h_inv_trans, sizeof(float)*6, cudaMemcpyHostToDevice, stream));
-
-
-    /// read serialized engine from local file 
+    /// read the serialized engine 
+    string trt_file(argv[1]); 
     vector<char> trtModelStream_;
-    size_t size{0};
+    size_t size(0);
     cout << "Loading engine file:" << trt_file << endl;
     ifstream file(trt_file, std::ios::binary);
     if (file.good()) {
@@ -150,37 +93,116 @@ int main(int argc, char* argv[]) {
         cerr << " Failed to createExecutionContext!" << endl;
         exit(-1);
     }
-    cout << " starting inference ... " << endl;
-    context->enqueue(1, (void**)buffers, stream, nullptr);
-    /// buffers[0]:input (3*512*512), buffers[1]:wh(2*128*128), buffers[2]:reg(1*128*128), buffers[3]: hm (80*128*128)
-    /// post-processing
-    for(int i = 0; i < 4; ++i) {
+    const int nb_bindings = context->getEngine().getNbBindings();
+    map<string, pair<int, size_t>> engine_name_size;
+    vector<string> binding_names(nb_bindings);
+    string input_name = "input";
+    for(int i = 0; i < nb_bindings; ++i) {
         auto dim = context->getEngine().getBindingDimensions(i);
-        cout << "i=" << i << " dim:("
+        string name = context->getEngine().getBindingName(i);
+        size_t size = dim.d[0] * dim.d[1] * dim.d[2] * dim.d[3];
+        size_t pos = name.find("input");
+        if (pos != name.npos) input_name = name;
+        cout << "i=" << i  << " tensor's name:"
+            << name
+            << " dim:("
             << dim.d[0] << ","
             << dim.d[1] << ","
             << dim.d[2] << ","
-            << dim.d[3] << ")" << endl;
-
+            << dim.d[3] << ")" 
+            << " size:" << size
+            << endl;
+        binding_names[i] = name;
+        engine_name_size.emplace(name, make_pair(i, size));
     }
-    int hm = context->getEngine().getBindingIndex("hm");
-    int wh = context->getEngine().getBindingIndex("wh");
-    int reg = context->getEngine().getBindingIndex("reg");
-    cout << "hm:" << hm << " wh:" << wh
-        << " reg:" << reg << endl;
+    int input_idx = context->getEngine().getBindingIndex(input_name.c_str());
+    int hm_idx = context->getEngine().getBindingIndex("hm");
+    int wh_idx = context->getEngine().getBindingIndex("wh");
+    int reg_idx = context->getEngine().getBindingIndex("reg");
+    cout <<"buffers'index, input:" << input_idx << " hm:" << hm_idx << " wh:"
+        << wh_idx << " reg:" << reg_idx << endl;
+
+    /// memory allocation
+    string img_name(argv[2]);
+    Mat img = imread(img_name);
+    assert (img.data != NULL);
+
+    const int batch_num = 1;
+    const int num_classes = 80;
+    const int K = 100;
+    const int net_h = 512;
+    const int net_w = 512;
+    const int net_oh = 128;
+    const int net_ow = 128;
+    const size_t input_size = net_h * net_w * 3 * batch_num;
+    const size_t hm_size = net_oh * net_ow * num_classes * batch_num;
+    const size_t wh_size = net_oh * net_ow * 2 * batch_num;
+    const int det_len = 1 + K * 6;
+    const size_t det_size = det_len * batch_num;
+
+    uint8_t* d_in;
+    float* buffers[4];
+    size_t* d_indices;
+    float* d_det;
+    float* h_det;
+
+    cv::RNG rng(time(0));
+    for (int  i = 0; i < 80; ++i) {
+        colors[i] = cv::Scalar(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
+    }
+    CHECK_CUDA(cudaMallocHost((void**)&h_det, sizeof(float) * det_size));
+    CHECK_CUDA(cudaMalloc((void**)&d_det, sizeof(float) * det_size));
+    CHECK_CUDA(cudaMalloc((void**)&d_in, sizeof(uint8_t) * input_size));
+    CHECK_CUDA(cudaMalloc((void**)&buffers[input_idx], sizeof(float) * input_size));
+    CHECK_CUDA(cudaMalloc((void**)&buffers[hm_idx], sizeof(float) * hm_size));
+    CHECK_CUDA(cudaMalloc((void**)&buffers[wh_idx], sizeof(float) * wh_size));
+    CHECK_CUDA(cudaMalloc((void**)&buffers[reg_idx], sizeof(float) * wh_size));
+    CHECK_CUDA(cudaMalloc((void**)&d_indices, sizeof(size_t) * hm_size));
+    CHECK_CUDA(cudaMemset(d_det, 0, sizeof(float) * det_size));
+
+    Mat inp_img(net_h, net_w, CV_8UC3);
+    float* d_mean;
+    float* d_std;
+    vector<float> mean {0.408, 0.447, 0.470}; // BGR mode
+    vector<float> std {0.289, 0.274, 0.278};
+    CHECK_CUDA(cudaMalloc((void**)&d_mean, sizeof(float)*3));
+    CHECK_CUDA(cudaMalloc((void**)&d_std, sizeof(float)*3));
+    float* d_inv_trans;
+    float* h_inv_trans;
+    cudaMallocHost((void**)&h_inv_trans, sizeof(float)*6);
+    CHECK_CUDA(cudaMalloc((void**)&d_inv_trans, sizeof(float)*6));
+
+    CHECK_CUDA(cudaMemcpyAsync(d_mean, mean.data(), sizeof(float)*3, cudaMemcpyHostToDevice, stream));
+    CHECK_CUDA(cudaMemcpyAsync(d_std, std.data(), sizeof(float)*3, cudaMemcpyHostToDevice, stream));
+
+    cuda_preprocess(batch_num, 
+            buffers[input_idx], d_in, img, inp_img, 
+            net_h, net_w,  
+            1., 31, true, 4.0, 
+            h_inv_trans,  
+            d_mean, true,
+            d_std, true,
+            stream);
+    //cout << "inv_trans:\n";
+    //for(int i = 0; i < 6; ++i) cout << h_inv_trans[i] << " ";
+    //cout << endl;
+
+    CHECK_CUDA(cudaMemcpyAsync(d_inv_trans, h_inv_trans, sizeof(float)*6, cudaMemcpyHostToDevice, stream));
+    cout << " starting inference ... " << endl;
+    context->enqueue(batch_num, (void**)buffers, stream, nullptr);
 
     /// decode the detection's result
-    ctdet_decode(d_det, buffers[wh], buffers[reg], 
-            buffers[hm], d_indices, 
+    ctdet_decode(d_det, buffers[wh_idx], buffers[reg_idx], 
+            buffers[hm_idx], d_indices, 
             d_inv_trans,  
-            batch_num, 80, 128, 128, K, 
+            batch_num, num_classes, net_oh, net_ow, K, 
             0.3, true, false, stream);
-    CHECK_CUDA(cudaMemcpyAsync(h_det, d_det, sizeof(float) * (K*6*batch_num+1), cudaMemcpyDeviceToHost, stream));
+    CHECK_CUDA(cudaMemcpyAsync(h_det, d_det, sizeof(float) * det_size, cudaMemcpyDeviceToHost, stream));
     cudaStreamSynchronize(stream);
     //cudaDeviceSynchronize();
 
-    cout <<"h_det:" << h_det[0] << endl;
-    int num_bbox = static_cast<int>(h_det[0]);
+    int batch_id = 0;
+    int num_bbox = static_cast<int>(h_det[batch_id * det_len]);
     if (!num_bbox) {
         cout << " No objects detected in the image!" << endl;
     } else {
@@ -190,12 +212,12 @@ int main(int argc, char* argv[]) {
         const int thickness = 1.5;
         for (int i = 0; i < num_bbox; ++i) {
             /// visulize
-            int x0 = h_det[1 + i * 6 + 2];
-            int y0 = h_det[1 + i * 6 + 3]; 
-            int x1 = h_det[1 + i * 6 + 4];
-            int y1 = h_det[1 + i * 6 + 5];
-            int cls_id = h_det[1 + i * 6 + 0];
-            float score = h_det[1 + i * 6 + 1];
+            int x0 = h_det[batch_id * det_len + 1 + i * 6 + 2];
+            int y0 = h_det[batch_id * det_len + 1 + i * 6 + 3]; 
+            int x1 = h_det[batch_id * det_len + 1 + i * 6 + 4];
+            int y1 = h_det[batch_id * det_len + 1 + i * 6 + 5];
+            int cls_id = h_det[batch_id * det_len + 1 + i * 6 + 0];
+            float score = h_det[batch_id * det_len + 1 + i * 6 + 1];
             cout << "class:" << coco_class_name[cls_id] << " score:"
                 << score << " bbox:[" << x0 << "," 
                 << y0  << "," << x1 << "," << y1 << "]\n";
@@ -231,8 +253,8 @@ int main(int argc, char* argv[]) {
     }
 
 
+    CHECK_CUDA(cudaProfilerStop());
 
-    //CHECK_CUDA(cudaProfilerStop());
     CHECK_CUDA(cudaFree(d_mean));
     CHECK_CUDA(cudaFree(d_std));
     CHECK_CUDA(cudaFree(d_in));
