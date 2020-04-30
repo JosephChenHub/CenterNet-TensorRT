@@ -2,13 +2,13 @@
 This is a C++ implementation of CenterNet using TensorRT and CUDA. Thanks for the official implementation of [CenterNet (Objects as Points)](https://github.com/xingyizhou/CenterNet)!
 
 <p align="center">
- <img src="det_out/det_16004479832_a748d55f21_k.jpg" align="center" height="230px">
- <img src="det_out/det_17790319373_bd19b24cfc_k.jpg" align="center" height="230px">
+ <img src="det_out/det_16004479832_a748d55f21_k.jpg" align="center" height="230px" width="400px">
+ <img src="det_out/det_17790319373_bd19b24cfc_k.jpg" align="center" height="230px" width="400px">
 </p>
 
 <p align="center">
- <img src="det_out/pose_33823288584_1d21cf0a26_k.jpg" align="center" height="230px">
- <img src="det_out/pose_17790319373_bd19b24cfc_k.jpg" align="center" height="230px">
+ <img src="det_out/pose_33823288584_1d21cf0a26_k.jpg" align="center" height="230px" width="400px">
+ <img src="det_out/pose_17790319373_bd19b24cfc_k.jpg" align="center" height="230px" width="400px">
 </p>
 
 
@@ -33,18 +33,27 @@ return [ret]
 ```
 to 
 ```
-if self.training:
-    return [ret]
-else:
-    hm = ret['hm'].sigmoid_()
-
-    hmax = nn.functional.max_pool2d(hm, (3, 3), stride=1, padding=1)
-    keep = (hmax == hm).float()
-    hm = hm * keep
-
-    return hm, ret['wh'], ret['reg']
+if self.training:                                                                                                           
+    return [ret]                                                                                                             
+else:                                                                                                                       
+    hm = ret['hm'].sigmoid_()                                                                                               
+    hmax = nn.functional.max_pool2d(hm, (3, 3), stride=1, padding=1)                                                         
+    keep = (hmax == hm).float()                                                                                             
+    hm = hm * keep                                                                                                                   
+    if len(self.heads) == 3: # 2D object detection                                                                           
+        return hm, ret['wh'], ret['reg']                                                                                              
+    elif len(self.heads) == 6: # multi_pose                                                                                 
+        wh, reg, hm_hp, hps, hp_offset = ret['wh'], ret['reg'], ret['hm_hp'], ret['hps'], ret['hp_offset']                            
+        hm_hp = hm_hp.sigmoid_()                                                                                             
+        hm_hp_max = nn.functional.max_pool2d(hm_hp, (3, 3), stride=1, padding=1)                                            
+        keep = (hm_hp_max == hm_hp).float()                                                                                
+        hm_hp = hm_hp * keep                                                                                                          
+        return hm, wh, reg, hps, hm_hp, hp_offset                                                                            
+    else:                                                                                                                   
+        #TODO                                                                                                               
+        raise Exception("Not implemented!")  
 ```
-modify the  function `process`  in `src/lib/detectors/ctdet.py`:
+For 2D object detection, modify the  function `process`  in `src/lib/detectors/ctdet.py`:
 ```
 with torch.no_grad():
     hm, wh, reg = self.model(images)
@@ -52,6 +61,14 @@ with torch.no_grad():
     torch.onnx.export(self.model, images, "ctdet-resdcn18.onnx", opset_version=9, verbose=False, output_names=["hm", "wh", "reg"])
     quit()
 ```
+For human pose estimation, modify the function `process` in `src/lib/detectors/multi_pose.py`:
+```
+       hm, wh, reg, hps, hm_hp, hp_offset = self.model(images)                                                               
+       names=['hm', 'wh', 'reg', 'hps', 'hm_hp', 'hp_offset']                                                               
+       torch.onnx.export(self.model, images, "pose.onnx", opset_version=9, \                                                 
+                         verbose=False, input_names=["input"], output_names=names)  
+```
+
 and replace the `CenterNet/src/lib/models/networks/DCNv2` with `DCNv2`.
 
 To obtain the onnx file, run the command:
