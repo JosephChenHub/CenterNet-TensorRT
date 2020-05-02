@@ -13,6 +13,7 @@
 
 #include "gpu_sort.hpp"
 #include "det_kernels.hpp"
+#include "custom.hpp"
 
 using namespace std;
 using namespace cv;
@@ -62,7 +63,6 @@ int main(int argc, char* argv[]) {
     CHECK_CUDA(cudaSetDevice(0));
     cudaStream_t stream;
     CHECK_CUDA(cudaStreamCreate(&stream));
-    CHECK_CUDA(cudaProfilerStart());
 
     /// read the serialized engine 
     string trt_file(argv[1]); 
@@ -132,9 +132,10 @@ int main(int argc, char* argv[]) {
     const int K = 100;
     const int net_h = 512;
     const int net_w = 512;
+    const int down_ratio = 4;
     const int net_oh = 128;
     const int net_ow = 128;
-    const size_t input_size = net_h * net_w * 3 * batch_num;
+    const size_t input_size = img.rows * img.cols * 3 * batch_num; //! directly copy cv::Mat to GPU mem.
     const size_t hm_size = net_oh * net_ow * num_classes * batch_num;
     const size_t wh_size = net_oh * net_ow * 2 * batch_num;
     const int det_len = 1 + K * 6;
@@ -150,6 +151,22 @@ int main(int argc, char* argv[]) {
     for (int  i = 0; i < 80; ++i) {
         colors[i] = cv::Scalar(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
     }
+    /// calculate the affine transform matrix
+    float* d_inv_trans;
+    float h_inv_trans[12];
+    CHECK_CUDA(cudaMalloc((void**)&d_inv_trans, sizeof(float)*12));
+    float center[2], scale[2];
+    center[0] = img.cols / 2.;
+    center[1] = img.rows / 2.;
+    scale[0] = img.rows > img.cols ? img.rows : img.cols;
+    scale[1] = scale[0];
+
+    float shift[2] = {0., 0.};
+    get_affine_transform(h_inv_trans, center, scale, shift, 0, net_h, net_w, true); //! src -> dst
+    get_affine_transform(h_inv_trans+6, center, scale, shift, 0, net_h / down_ratio, net_w / down_ratio, true); // det's
+
+    CHECK_CUDA(cudaMemcpyAsync(d_inv_trans, h_inv_trans, sizeof(float) * 12, cudaMemcpyHostToDevice, stream));
+    /// 
     CHECK_CUDA(cudaMallocHost((void**)&h_det, sizeof(float) * det_size));
     CHECK_CUDA(cudaMalloc((void**)&d_det, sizeof(float) * det_size));
     CHECK_CUDA(cudaMalloc((void**)&d_in, sizeof(uint8_t) * input_size));
@@ -158,43 +175,33 @@ int main(int argc, char* argv[]) {
     CHECK_CUDA(cudaMalloc((void**)&buffers[wh_idx], sizeof(float) * wh_size));
     CHECK_CUDA(cudaMalloc((void**)&buffers[reg_idx], sizeof(float) * wh_size));
     CHECK_CUDA(cudaMalloc((void**)&d_indices, sizeof(size_t) * hm_size));
-    CHECK_CUDA(cudaMemset(d_det, 0, sizeof(float) * det_size));
+    CHECK_CUDA(cudaMemsetAsync(d_det, 0, sizeof(float) * det_size, stream));
+    CHECK_CUDA(cudaMemcpyAsync(d_in, img.data, sizeof(uint8_t) * input_size, cudaMemcpyHostToDevice, stream));
+    //CHECK_CUDA(cudaProfilerStart());
 
-    Mat inp_img(net_h, net_w, CV_8UC3);
+
     float* d_mean;
     float* d_std;
-    vector<float> mean {0.408, 0.447, 0.470}; // BGR mode
-    vector<float> std {0.289, 0.274, 0.278};
-    CHECK_CUDA(cudaMalloc((void**)&d_mean, sizeof(float)*3));
-    CHECK_CUDA(cudaMalloc((void**)&d_std, sizeof(float)*3));
-    float* d_inv_trans;
-    float* h_inv_trans;
-    cudaMallocHost((void**)&h_inv_trans, sizeof(float)*6);
-    CHECK_CUDA(cudaMalloc((void**)&d_inv_trans, sizeof(float)*6));
+    //vector<float> mean {0.408, 0.447, 0.470}; // BGR mode
+    //vector<float> std {0.289, 0.274, 0.278};
+    //CHECK_CUDA(cudaMalloc((void**)&d_mean, sizeof(float)*3));
+    //CHECK_CUDA(cudaMalloc((void**)&d_std, sizeof(float)*3));
+    //CHECK_CUDA(cudaMemcpyAsync(d_mean, mean.data(), sizeof(float)*3, cudaMemcpyHostToDevice, stream));
+    //CHECK_CUDA(cudaMemcpyAsync(d_std, std.data(), sizeof(float)*3, cudaMemcpyHostToDevice, stream));
 
-    CHECK_CUDA(cudaMemcpyAsync(d_mean, mean.data(), sizeof(float)*3, cudaMemcpyHostToDevice, stream));
-    CHECK_CUDA(cudaMemcpyAsync(d_std, std.data(), sizeof(float)*3, cudaMemcpyHostToDevice, stream));
+    cuda_centernet_preprocess(batch_num, 
+        d_in, 3,  img.rows, img.cols,   
+        buffers[input_idx], net_h, net_w, 
+        d_inv_trans, d_mean, true, 
+        d_std, true, stream);
 
-    cuda_preprocess(batch_num, 
-            buffers[input_idx], d_in, img, inp_img, 
-            net_h, net_w,  
-            1., 31, true, 4.0, 
-            h_inv_trans,  
-            d_mean, true,
-            d_std, true,
-            stream);
-    //cout << "inv_trans:\n";
-    //for(int i = 0; i < 6; ++i) cout << h_inv_trans[i] << " ";
-    //cout << endl;
-
-    CHECK_CUDA(cudaMemcpyAsync(d_inv_trans, h_inv_trans, sizeof(float)*6, cudaMemcpyHostToDevice, stream));
     cout << " starting inference ... " << endl;
     context->enqueue(batch_num, (void**)buffers, stream, nullptr);
 
     /// decode the detection's result
     ctdet_decode(d_det, buffers[wh_idx], buffers[reg_idx], 
             buffers[hm_idx], d_indices, 
-            d_inv_trans,  
+            d_inv_trans+6,  
             batch_num, num_classes, net_oh, net_ow, K, 
             0.3, true, false, stream);
     CHECK_CUDA(cudaMemcpyAsync(h_det, d_det, sizeof(float) * det_size, cudaMemcpyDeviceToHost, stream));
@@ -234,7 +241,7 @@ int main(int argc, char* argv[]) {
             cv::rectangle(img, cv::Point(x0, y0), cv::Point(x1, y1), colors[cls_id], 3);
             //cv::rectangle(img, cv::Point(x0, y0 - text_size.height - 2), \
                     cv::Point(x0 + text_size.width, y0 - 2), colors[cls_id], 2);
-            cv::putText(img, text, cv::Point(x0, y0-2), font_face, font_scale, cv::Scalar(0, 0, 255), thickness, cv::LINE_AA);
+            cv::putText(img, text, cv::Point(x0, y0-5), font_face, font_scale, cv::Scalar(0, 0, 255), thickness, cv::LINE_AA);
 
         }
         cout << endl;
@@ -253,14 +260,14 @@ int main(int argc, char* argv[]) {
     }
 
 
-    CHECK_CUDA(cudaProfilerStop());
 
-    CHECK_CUDA(cudaFree(d_mean));
-    CHECK_CUDA(cudaFree(d_std));
+    //CHECK_CUDA(cudaProfilerStop());
+    //CHECK_CUDA(cudaFree(d_mean));
+    //CHECK_CUDA(cudaFree(d_std));
     CHECK_CUDA(cudaFree(d_in));
     CHECK_CUDA(cudaFree(d_indices));
     CHECK_CUDA(cudaFree(d_det));
-    CHECK_CUDA(cudaFreeHost(h_inv_trans));
+    CHECK_CUDA(cudaFree(d_inv_trans));
     CHECK_CUDA(cudaFreeHost(h_det));
     for(int i = 0;i < 4; ++i) CHECK_CUDA(cudaFree(buffers[i]));
     CHECK_CUDA(cudaStreamDestroy(stream));

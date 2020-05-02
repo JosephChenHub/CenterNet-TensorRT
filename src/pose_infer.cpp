@@ -13,6 +13,7 @@
 
 #include "gpu_sort.hpp"
 #include "det_kernels.hpp"
+#include "custom.hpp"
 
 using namespace std;
 using namespace cv;
@@ -118,12 +119,14 @@ int main(int argc, char* argv[]) {
     assert (img.data != NULL);
 
     const int batch_num = 1;
+    const size_t input_size = img.rows * img.cols * 3 * batch_num;
     const int K = 100;
     const int num_joints = 17;
     const int net_h = 512;
     const int net_w = 512;
     const int net_oh = 128;
     const int net_ow = 128;
+    const int down_ratio = 4;
 
     const int det_len = 2 + 4 + num_joints*2; // score + class+points
     const int batch_len = 1 + det_len * K; 
@@ -139,46 +142,56 @@ int main(int argc, char* argv[]) {
     for (int  i = 0; i < 80; ++i) {
         colors[i] = cv::Scalar(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
     }
+    /// calculate the affine transformation matrix
+    float* d_inv_trans;
+    float h_inv_trans[12];
+
+    CHECK_CUDA(cudaMalloc((void**)&d_inv_trans, sizeof(float)*12));
+
+    float center[2], scale[2];
+    center[0] = img.cols / 2.;
+    center[1] = img.rows / 2.;
+    scale[0] = img.rows > img.cols ? img.rows : img.cols;
+    scale[1] = scale[0];
+
+    float shift[2] = {0., 0.};
+
+    get_affine_transform(h_inv_trans, center, scale, shift, 0, net_h, net_w, true); //! src -> dst
+    get_affine_transform(h_inv_trans+6, center, scale, shift, 0, net_h / down_ratio, net_w / down_ratio, true); // det's
+    CHECK_CUDA(cudaMemcpyAsync(d_inv_trans, h_inv_trans, sizeof(float) * 12, cudaMemcpyHostToDevice, stream));
+    ///
     CHECK_CUDA(cudaMallocHost((void**)&h_det, sizeof(float) * det_size));
     for(int i = 0; i < nb_bindings; ++i) {
         CHECK_CUDA(cudaMalloc((void**)&buffers[i], sizeof(float) * engine_name_size[binding_names[i]].second));
     }
 
     CHECK_CUDA(cudaMalloc((void**)&d_det, sizeof(float) * det_size));
-    CHECK_CUDA(cudaMalloc((void**)&d_in, sizeof(uint8_t) * engine_name_size[input_name].second));
+    CHECK_CUDA(cudaMalloc((void**)&d_in, sizeof(uint8_t) * input_size));
     CHECK_CUDA(cudaMalloc((void**)&d_heat_ind, sizeof(size_t) * engine_name_size["hm"].second));
     CHECK_CUDA(cudaMalloc((void**)&d_hp_ind, sizeof(size_t) * engine_name_size["hm_hp"].second));
-
-
     CHECK_CUDA(cudaMemset(d_det, 0, sizeof(float) * det_size));
-    Mat inp_img(net_h, net_w, CV_8UC3);
+
+    CHECK_CUDA(cudaMemcpyAsync(d_in, img.data, sizeof(uint8_t) * input_size, cudaMemcpyHostToDevice, stream));
 
     float* d_mean;
     float* d_std;
-    vector<float> mean {0.408, 0.447, 0.470}; // BGR mode
-    vector<float> std {0.289, 0.274, 0.278};
-    CHECK_CUDA(cudaMalloc((void**)&d_mean, sizeof(float)*3));
-    CHECK_CUDA(cudaMalloc((void**)&d_std, sizeof(float)*3));
-    CHECK_CUDA(cudaMemcpy(d_mean, mean.data(), sizeof(float)*3, cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_std, std.data(), sizeof(float)*3, cudaMemcpyHostToDevice));
-    float* d_inv_trans;
-    float* h_inv_trans;
-    cudaMallocHost((void**)&h_inv_trans, sizeof(float)*6);
-    CHECK_CUDA(cudaMalloc((void**)&d_inv_trans, sizeof(float)*6));
+    //vector<float> mean {0.408, 0.447, 0.470}; // BGR mode
+    //vector<float> std {0.289, 0.274, 0.278};
+    //CHECK_CUDA(cudaMalloc((void**)&d_mean, sizeof(float)*3));
+    //CHECK_CUDA(cudaMalloc((void**)&d_std, sizeof(float)*3));
+    //CHECK_CUDA(cudaMemcpyAsync(d_mean, mean.data(), sizeof(float)*3, cudaMemcpyHostToDevice, stream));
+    //CHECK_CUDA(cudaMemcpyAsync(d_std, std.data(), sizeof(float)*3, cudaMemcpyHostToDevice, stream));
 
-    cuda_preprocess(batch_num, 
-            buffers[0], d_in, img, inp_img, 
-            net_h, net_w,  
-            1., 31, true, 4.0, 
-            h_inv_trans,  
-            d_mean, true,
-            d_std, true,
-            stream);
-    //cout << "inv_trans:\n";
-    //for(int i = 0; i < 6; ++i) cout << h_inv_trans[i] << " ";
-    //cout << endl;
 
-    CHECK_CUDA(cudaMemcpyAsync(d_inv_trans, h_inv_trans, sizeof(float)*6, cudaMemcpyHostToDevice, stream));
+
+    cuda_centernet_preprocess(batch_num, 
+        d_in, 3,  img.rows, img.cols,   
+        buffers[engine_name_size[input_name].first], net_h, net_w, 
+        d_inv_trans, d_mean, true, 
+        d_std, true, stream);
+
+
+
     cout << " starting inference ... " << endl;
     context->enqueue(batch_num, (void**)buffers, stream, nullptr);
 
@@ -190,7 +203,7 @@ int main(int argc, char* argv[]) {
             buffers[engine_name_size["hps"].first],
             buffers[engine_name_size["hm_hp"].first], 
             buffers[engine_name_size["hp_offset"].first], 
-            d_heat_ind, d_hp_ind, d_inv_trans,  
+            d_heat_ind, d_hp_ind, d_inv_trans+6,  
             batch_num, num_joints, net_oh, net_ow, K, 
             0.3, true, true, stream);
     CHECK_CUDA(cudaMemcpyAsync(h_det, d_det, sizeof(float) * det_size, cudaMemcpyDeviceToHost, stream));
@@ -229,14 +242,14 @@ int main(int argc, char* argv[]) {
             int baseline=0;
             cv::Size text_size = cv::getTextSize(text, font_face, font_scale, thickness, &baseline);
 
-            cv::rectangle(img, cv::Point(x0, y0), cv::Point(x1, y1), colors[cls_id], 3);
+            cv::rectangle(img, cv::Point(x0, y0), cv::Point(x1, y1), colors[cls_id], 5);
             //cv::rectangle(img, cv::Point(x0, y0 - text_size.height - 2), \
                     cv::Point(x0 + text_size.width, y0 - 2), colors[cls_id], 2);
             cv::putText(img, text, cv::Point(x0, y0-3), font_face, font_scale, cv::Scalar(0, 0, 255), thickness, cv::LINE_AA);
             for(int j = 0; j < num_joints; ++j) {
                 x0 = h_det[batch_id * batch_len + 1 + i * det_len + 6 + j*2];
                 y0 = h_det[batch_id * batch_len + 1 + i * det_len + 6 + j*2 + 1];
-                cv::circle(img, cv::Point(x0, y0), 3, hp_colors[i], -1);
+                cv::circle(img, cv::Point(x0, y0), 6, hp_colors[i], -1);
             }
             for(int j = 0; j < edges.size(); ++j) {
                 int p0 = edges[j].first;
@@ -247,7 +260,7 @@ int main(int argc, char* argv[]) {
                 x1 = h_det[batch_id*batch_len + 1 + i*det_len + 6 + p1*2];
                 y1 = h_det[batch_id*batch_len + 1 + i*det_len + 6 + p1*2+1];
                 if (x0 > 0 && y0 > 0 && x1 > 0 && y1 > 0) {
-                    cv::line(img, cv::Point(x0, y0), cv::Point(x1, y1), e_colors[j], 2, cv::LINE_AA);
+                    cv::line(img, cv::Point(x0, y0), cv::Point(x1, y1), e_colors[j], 4, cv::LINE_AA);
 
                 }
             }
@@ -272,13 +285,13 @@ int main(int argc, char* argv[]) {
 
 
     //CHECK_CUDA(cudaProfilerStop());
-    CHECK_CUDA(cudaFree(d_mean));
-    CHECK_CUDA(cudaFree(d_std));
+    //CHECK_CUDA(cudaFree(d_mean));
+    //CHECK_CUDA(cudaFree(d_std));
     CHECK_CUDA(cudaFree(d_in));
     CHECK_CUDA(cudaFree(d_heat_ind));
     CHECK_CUDA(cudaFree(d_hp_ind));
     CHECK_CUDA(cudaFree(d_det));
-    CHECK_CUDA(cudaFreeHost(h_inv_trans));
+    CHECK_CUDA(cudaFree(d_inv_trans));
     CHECK_CUDA(cudaFreeHost(h_det));
     for(int i = 0;i < nb_bindings; ++i) CHECK_CUDA(cudaFree(buffers[i]));
     CHECK_CUDA(cudaStreamDestroy(stream));

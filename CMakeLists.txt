@@ -22,7 +22,9 @@ cmake_minimum_required(VERSION 3.13)
 project(trt_infer LANGUAGES CXX C)
 
 set(TRTINFER_ROOT ${PROJECT_SOURCE_DIR})
-set(EXE_NAME trt_infer)
+set(DET_EXE_NAME ctdet_infer)
+set(POSE_EXE_NAME pose_infer)
+
 # c++11
 set(CMAKE_CXX_STANDARD  11)
 
@@ -32,7 +34,7 @@ set(CMAKE_BUILD_TYPE "Release")
 
 set(USE_LIBTORCH OFF)
 set(USE_OPENCV ON)
-set(BUILD_GTEST ON)
+set(BUILD_GTEST OFF)
 set(USE_TENSORRT ON)
 
 
@@ -55,16 +57,21 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Build configurations, global to all projects
 #--------------------------------------------------
 
-set(EXE_SOURCES
+set(DET_EXE_SOURCES
   ${PROJECT_SOURCE_DIR}/src/ctdet_infer.cpp
+  ${PROJECT_SOURCE_DIR}/common/logger.cpp
+)
+set(POSE_EXE_SOURCES
+  ${PROJECT_SOURCE_DIR}/src/pose_infer.cpp
   ${PROJECT_SOURCE_DIR}/common/logger.cpp
 )
 
 set(CU_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/ctdet_kernels.cu
-    ${PROJECT_SOURCE_DIR}/src/topk_gpu.cu
+    ${PROJECT_SOURCE_DIR}/src/det_kernels.cu
+    #${PROJECT_SOURCE_DIR}/src/topk_gpu.cu
     ${PROJECT_SOURCE_DIR}/src/gpu_sort.cu
     ${PROJECT_SOURCE_DIR}/src/custom.cpp
+    #${PROJECT_SOURCE_DIR}/src/warp_affine.cu
 )
 
 set(EXE_INCLUDE
@@ -125,12 +132,7 @@ endif(USE_OPENCV)
 include_directories(${TENSORRT_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
 
 # CUDA
-if (CMAKE_BUILD_TYPE MATCHES "Debug")
-    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda --expt-relaxed-constexpr -std=c++11 -g -G")
-else(CMAKE_BUILD_TYPE "Release")
-    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda --expt-relaxed-constexpr -std=c++11 -O2")
-endif()
-
+list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda --expt-relaxed-constexpr -std=c++11 -O2")
 CUDA_INCLUDE_DIRECTORIES(${CUDNN_INCLUDE_DIR} ${TENSORRT_INCLUDE_DIR})
 CUDA_ADD_LIBRARY(cu_lib SHARED ${CU_SOURCES})
 target_link_libraries(cu_lib ${OpenCV_LIBS})
@@ -191,19 +193,28 @@ endif()
 # --------------------------------
 # Converter executable
 # --------------------------------
-add_executable(${EXE_NAME} ${EXE_SOURCES})
-target_include_directories(${EXE_NAME} PUBLIC ${EXE_INCLUDE})
-target_link_libraries(${EXE_NAME} ${TENSORRT_LIBRARY}
+add_executable(${DET_EXE_NAME} ${DET_EXE_SOURCES})
+target_include_directories(${DET_EXE_NAME} PUBLIC ${EXE_INCLUDE})
+target_link_libraries(${DET_EXE_NAME} ${TENSORRT_LIBRARY}
     ${CUDA_LIBRARIES} ${CUDNN_LIBRARY})
-target_link_libraries(${EXE_NAME} cu_lib)
-target_link_libraries(${EXE_NAME} ${PROJECT_SOURCE_DIR}/tensorrt-plugin/build/libDCN.so)
+target_link_libraries(${DET_EXE_NAME} cu_lib)
+target_link_libraries(${DET_EXE_NAME} ${PROJECT_SOURCE_DIR}/tensorrt-plugin/build/libDCN.so)
 
-#if(USE_LIBTORCH)
-#    target_link_libraries(${EXE_NAME} ${TORCH_LIBRARIES})
-#endif()
 
 if(USE_OPENCV)
-    target_include_directories(${EXE_NAME} PUBLIC ${OpenCV_INCLUDE_DIRS})
-    target_link_libraries(${EXE_NAME} ${OpenCV_LIBS})
+    target_include_directories(${DET_EXE_NAME} PUBLIC ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(${DET_EXE_NAME} ${OpenCV_LIBS})
 endif()
 
+add_executable(${POSE_EXE_NAME} ${POSE_EXE_SOURCES})
+target_include_directories(${POSE_EXE_NAME} PUBLIC ${EXE_INCLUDE})
+target_link_libraries(${POSE_EXE_NAME} ${TENSORRT_LIBRARY}
+    ${CUDA_LIBRARIES} ${CUDNN_LIBRARY})
+target_link_libraries(${POSE_EXE_NAME} cu_lib)
+target_link_libraries(${POSE_EXE_NAME} ${PROJECT_SOURCE_DIR}/tensorrt-plugin/build/libDCN.so)
+
+
+if(USE_OPENCV)
+    target_include_directories(${POSE_EXE_NAME} PUBLIC ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(${POSE_EXE_NAME} ${OpenCV_LIBS})
+endif()

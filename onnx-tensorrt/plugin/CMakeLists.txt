@@ -96,9 +96,9 @@ MESSAGE(STATUS "Find TensorRT libs at ${TENSORRT_LIBRARY}")
 # --------------------------------
 find_package(CUDA 10.0 REQUIRED)
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
-    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda -std=c++11")
+    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda -std=c++11 -g -G")
 else(CMAKE_BUILD_TYPE MATCHES "Release")
-    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda -std=c++11")
+    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda -std=c++11 -O2")
 endif()
 
 CUDA_INCLUDE_DIRECTORIES(${CUDNN_INCLUDE_DIR} ${TENSORRT_INCLUDE_DIR})

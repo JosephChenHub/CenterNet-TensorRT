@@ -429,6 +429,80 @@ TEST(CPU, log2_series) {
     //cout << endl;
 }
 
+TEST(CPU, warpAffine) {
+    Mat img = cv::imread("b.jpg");
+
+    int new_height = static_cast<int>(img.rows * 1);
+    int new_width  = static_cast<int>(img.cols * 1);
+    int inp_h = 512, inp_w = 512;
+    float c[2], s[2];
+    c[0] = new_width / 2.;
+    c[1] = new_height / 2.;
+    s[0] = img.rows > img.cols ? img.rows : img.cols;
+    s[1] = s[0];
+
+    /// affine_transform
+    float shift[2] = {0., 0.};
+    using namespace cv;
+    cv::Mat warp_mat (2, 3, CV_32FC1);
+    get_affine_transform((float*)warp_mat.data, c, s, shift, 0, inp_h, inp_w);
+    //get_affine_transform(inv_trans, c, s, shift, 0, inp_h / down_ratio, inp_w / down_ratio, true);
+
+    //std::cout << "warp_mat:\n" << warp_mat << std::endl;
+    cv::Mat inp_img = cv::Mat::zeros(inp_h, inp_w, img.type());
+    warpAffine(img, inp_img, warp_mat, inp_img.size());
+    cv::imwrite("cpu_warp.jpg", inp_img);
+
+}
+
+TEST(GPU, warpAffine) {
+    Mat img = cv::imread("b.jpg");
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
+    const int channel = 3;
+    int new_height = static_cast<int>(img.rows * 1);
+    int new_width  = static_cast<int>(img.cols * 1);
+    int inp_h = 512, inp_w = 512;
+    float c[2], s[2];
+    c[0] = new_width / 2.;
+    c[1] = new_height / 2.;
+    s[0] = img.rows > img.cols ? img.rows : img.cols;
+    s[1] = s[0];
+
+    /// affine_transform
+    float shift[2] = {0., 0.};
+    float h_trans[6];
+    uint8_t* d_in, *d_out;
+    float* d_trans;
+
+    CHECK_CUDA(cudaMalloc((void**)&d_trans, sizeof(float) * 6));
+    CHECK_CUDA(cudaMalloc((void**)&d_in, sizeof(uint8_t) * new_height * new_width * channel));
+    CHECK_CUDA(cudaMalloc((void**)&d_out, sizeof(uint8_t) * inp_h * inp_w * channel));
+    Mat inp_img = Mat::zeros(inp_h, inp_w, CV_8UC3);
+
+    CHECK_CUDA(cudaMemcpyAsync(d_in, img.data, sizeof(uint8_t) * new_height * new_width * channel, cudaMemcpyHostToDevice, stream));
+
+    get_affine_transform(h_trans, c, s, shift, 0, inp_h, inp_w, true); 
+
+
+    //get_affine_transform(inv_trans, c, s, shift, 0, inp_h / down_ratio, inp_w / down_ratio, true);
+    CHECK_CUDA(cudaMemcpyAsync(d_trans, h_trans, sizeof(float) * 6, cudaMemcpyHostToDevice, stream));
+
+    cuda_warp_affine<uint8_t, uint8_t>(1, d_in, channel, new_height, new_width, 
+            d_out, inp_h, inp_w, d_trans, stream);
+
+    CHECK_CUDA(cudaMemcpyAsync(inp_img.data, d_out, sizeof(uint8_t)*inp_h*inp_w*3, cudaMemcpyDeviceToHost, stream));
+
+    cudaStreamSynchronize(stream);
+
+    cv::imwrite("gpu_warp.jpg", inp_img);
+
+    cudaFree(d_trans);
+    cudaFree(d_in);
+    cudaFree(d_out);
+    cudaStreamDestroy(stream);
+}
 
 
 int main(int argc, char* argv[]) {
