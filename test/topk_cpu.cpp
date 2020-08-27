@@ -1,14 +1,12 @@
-#include "topk_cpu.hpp"
-
-
+#include "test_include.hpp"
 
 
 
 template <typename T>
 void top_k(T* in, const size_t num, const size_t k, MinHeap<T>& heap) {
-    /// build a min-heap
+    // build a min-heap
     if(heap.size() == 0) heap = MinHeap<T>(in, k);
-    /// compare 
+    // compare 
     T* heap_ptr = heap.data();
     size_t* heap_idx = heap.index();
     for (size_t i = k; i < num; ++i) {

@@ -1,4 +1,10 @@
 #include "custom.hpp"
+#include <cstring>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <iostream>
+#include <dirent.h>
 
 using namespace std;
 
@@ -80,3 +86,33 @@ void get_affine_transform(
         }
     }
 }
+
+
+vector<string> split_str(string& str, string pattern) {
+    vector<string> res;
+    if (pattern.empty()) return res;
+    size_t start = 0, index = str.find(pattern, 0);
+    while (index != str.npos) {
+        if (start != index) res.push_back(str.substr(start, index - start));
+        start = index + 1;
+        index = str.find(pattern, start);
+
+    }
+    if (!str.substr(start).empty()) res.push_back(str.substr(start));
+    return res;
+}
+
+void makedirs(const char* dir) {
+    char str[512];
+    strncpy(str, dir, 512);
+    int len = strlen(str);
+    for(int i = 0 ; i < len; ++i) {
+        if(str[i] == '/') {
+            str[i] = '\0';
+            if (access(str, 0) != 0) mkdir(str, 0777);
+            str[i] = '/';
+        }
+    }
+    if(len > 0 && access(str, 0) != 0) mkdir(str, 0777);
+}
+

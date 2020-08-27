@@ -1,7 +1,34 @@
 #pragma once
 
+
+#include <vector>
+#include <cassert>
+#include <algorithm>
 #include <stddef.h>
 #include <cstring>
+#include <memory>
+#include <math.h>
+#include <stdlib.h> // rand
+#include <time.h> 
+#include <opencv2/opencv.hpp>
+#include <cuda_runtime_api.h>
+
+#include "sharedmem.hpp"
+#include "gpu_common.cuh"
+#include "custom.hpp"
+#include "decode.hpp"
+#include "process.hpp"
+
+
+template <typename T1, typename T2>
+void cuda_warp_affine(const int batch_num, 
+        T1* src, const int channel, const int in_h, const int in_w,  
+        T2* dst, const int out_h, const int out_w, 
+        const float* trans, cudaStream_t stream);
+
+template <typename T>
+void fastTopK(T* data, T* buff, const size_t num, const size_t k, T* out);
+
 
 template <typename T>
 class MinHeap {
@@ -56,3 +83,5 @@ public:
 
 template <typename T>
 void top_k(T* in, const size_t num, const size_t k, MinHeap<T>& heap);
+
+// end of this file

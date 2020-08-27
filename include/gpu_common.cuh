@@ -1,6 +1,10 @@
 #ifndef __GPU_COMMON_CUH
 #define __GPU_COMMON_CUH
 
+#include <utility>
+#include <unordered_map>
+#include <iostream>
+#include <cuda_runtime_api.h>
 
 template <typename T>
 struct DoubleBuffer {
@@ -78,6 +82,55 @@ struct Pair {
         exit(-1); \
     } \
 }
+
+///
+/// \brief a Simple GPU memory management 
+/// 
+class GPUAllocator {
+private:
+   std::unordered_map<std::string, std::pair<void*, size_t>> _data;
+  
+public:
+   GPUAllocator() {}
+   ~GPUAllocator() {
+       for(auto &e: _data) {
+           auto ptr = e.second.first;
+           if(ptr) CHECK_CUDA(cudaFree(ptr));
+       }
+   }
+
+   template <typename T>
+   T* get_pointer(const char* name) const { /// note that the pointer is a memory address on GPU, you cannot directly access the contents by reference it 
+       auto res = _data.find(std::string(name));
+       if(res == _data.end()) return nullptr;
+       return reinterpret_cast<T*>(res->second.first);
+   }
+
+   template <typename T>
+   T* allocate(const char* name, size_t size) {
+       T* tmp;
+       auto res = _data.find(std::string(name));
+       if (res == _data.end() || res->second.second < size) {
+	    if (res != _data.end()) {
+                std::cout << "Warning: existing memory :" << name 
+                    << " is smaller than the requested, and it will be destroyed and allocated again!" 
+                    << std::endl;
+		auto ptr = res->second.first;
+		if(ptr) CHECK_CUDA(cudaFree(ptr));
+            }
+            CHECK_CUDA(cudaMalloc((void**)&tmp, sizeof(T) * size));
+	    auto item = std::make_pair(reinterpret_cast<void*>(tmp), size);
+	    if (res == _data.end()) _data.emplace(std::string(name),  item);
+	    else res->second = item; 
+       } else {
+            tmp = reinterpret_cast<T*>(res->second.first); 
+       }
+       return tmp;
+   }
+
+
+};
+
 
 
 #endif

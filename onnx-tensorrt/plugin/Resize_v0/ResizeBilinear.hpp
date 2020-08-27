@@ -6,7 +6,7 @@
 #include "NvInfer.h"
 
 #include <thread>
-
+#include <vector>
 #include <cassert>
 #include <iostream>
 

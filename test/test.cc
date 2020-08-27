@@ -1,59 +1,11 @@
 #include <gtest/gtest.h>
-#include <vector>
-//#include <fstream>
-//#include <sstream>
-//#include <cstring>
-#include <memory>
-#include <math.h>
 
-#include <stdlib.h> // rand
-#include <time.h> 
 
-#include <cuda_runtime_api.h> // cuda
-#include <opencv2/opencv.hpp>
+#include "test_include.hpp"
 
-#include "topk_gpu.hpp"
-#include "topk_cpu.hpp"
-#include "gpu_sort.hpp"
-#include "det_kernels.hpp"
-#include "custom.hpp"
-#include "gpu_common.cuh"
-
-//#include <ATen/ATen.h> // libtorch, cpu version 
-
-//#include "common/logger.h"
 
 using namespace std;
 using namespace cv;
-//using namespace nvinfer1;
-
-
-
-/*
-struct NvInferDeleter {
-    template <typename T>
-    void operator()(T* obj) const {
-        if (obj) {
-            obj->destroy();
-        }
-    }
-};
-*/
-
-/*
-vector<string> split_str(string& str, string pattern) {
-    vector<string> res;
-    if (pattern.empty()) return res;
-    size_t start = 0, index = str.find_first_of(pattern, 0);
-    while (index != str.npos) {
-        if (start != index) res.push_back(str.substr(start, index - start));
-        start = index + 1;
-        index = str.find_first_of(pattern, start);
-    }
-    if (!str.substr(start).empty()) res.push_back(str.substr(start));
-    return res;
-}
-*/
 
 
 TEST(Foo, test) {

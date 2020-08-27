@@ -1,15 +1,7 @@
 /*
  * modified from https://github.com/anilshanbhag/gpu-topk
  */ 
-
-#include "sharedmem.hpp"
-#include <algorithm>
-#include "topk_gpu.hpp"
-#include <vector>
-#include <cassert>
-#include "gpu_common.cuh"
-
-#include "custom.hpp"
+#include "test_include.hpp"
 
 
 using namespace std;
