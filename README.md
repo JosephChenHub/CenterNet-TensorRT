@@ -2,13 +2,13 @@
 This is a C++ implementation of CenterNet using TensorRT and CUDA. Thanks for the official implementation of [CenterNet (Objects as Points)](https://github.com/xingyizhou/CenterNet)!
 
 <p align="center">
- <img src="det_out/det_16004479832_a748d55f21_k.jpg" align="center" height="230px" width="400px">
- <img src="det_out/det_17790319373_bd19b24cfc_k.jpg" align="center" height="230px" width="400px">
+ <img src="examples/det_out/det_16004479832_a748d55f21_k.jpg" align="center" height="230px" width="400px">
+ <img src="examples/det_out/det_17790319373_bd19b24cfc_k.jpg" align="center" height="230px" width="400px">
 </p>
 
 <p align="center">
- <img src="det_out/pose_33823288584_1d21cf0a26_k.jpg" align="center" height="230px" width="400px">
- <img src="det_out/pose_17790319373_bd19b24cfc_k.jpg" align="center" height="230px" width="400px">
+ <img src="examples/det_out/pose_33823288584_1d21cf0a26_k.jpg" align="center" height="230px" width="400px">
+ <img src="examples/det_out/pose_17790319373_bd19b24cfc_k.jpg" align="center" height="230px" width="400px">
 </p>
 
 
@@ -21,10 +21,16 @@ This is a C++ implementation of CenterNet using TensorRT and CUDA. Thanks for th
 - libtorch (torch c++ lib of cpu version, gpu version may conflict with the environment) [optional]
 - gtest (Google C++ testing framework) [optional]
 
+note that 
+- The TensorRT library must be consistent with the installed CUDA and CUDNN
+- TensorRT 5 does not support dynamic shape
+- TensorRT 7.0.x does not directly support the Int8 calibration with dynamic shape
+- TensorRT 7.1.x supports the Int8 calibration with dynamic shape
 
 # Plugins of TensorRT:
 - MyUpsampling: F.interpolate/ nn.nn.UpsamplingBilinear2d
 - DCN: deformable CNN
+
 
 # PyTorch to onnx 
 Clone the repo [CenterNet (Objects as Points)](https://github.com/xingyizhou/CenterNet) and download the models, then modify the backbone's outputs from 
@@ -69,7 +75,7 @@ For human pose estimation, modify the function `process` in `src/lib/detectors/m
                          verbose=False, input_names=["input"], output_names=names)  
 ```
 
-and replace the `CenterNet/src/lib/models/networks/DCNv2` with `DCNv2`.
+and replace the `CenterNet/src/lib/models/networks/DCNv2` with `plugins_py/DCNv2`.
 
 To obtain the onnx file, run the command:
 ```
@@ -108,12 +114,12 @@ make -j
 ```
 then, run this command to see the detection's result:
 ```
-./build/ctdet_infer ~/ctdet-resdcn18-fp16.trt ./data/xxxx.jpg
+./build/ctdet_infer -g=0 -e=ctdet-resdcn18-fp16.trt -i=data.txt -o=det_res
 ```
 
 For pose estimation, run the command:
 ```
-./build/pose_infer xxxxx.trt xxxx.jpg
+./build/pose_infer -g=0 -e=xxxxx.trt -i=data.txt -o=pos_res
 ```
 
 # Analysis

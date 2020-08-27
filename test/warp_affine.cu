@@ -1,13 +1,14 @@
-#include <cuda_runtime_api.h>
-#include "custom.hpp"
+#include "test_include.hpp"
 
 
 
 
+/// 
+/// \brief This kernel is designed for warp affine transform. 
 /// warpAffine: src -> dst, since the traversal locates on dst rather than src,
 /// we need the inverse transformation matrix
 /// dst = trans * src, src = inv_trans * dst  
-
+/// 
 template <typename T1, typename T2>
 __global__ void warp_affine_kernel(const int batch_num, 
         T1* src,  const int channel, 
@@ -23,7 +24,7 @@ __global__ void warp_affine_kernel(const int batch_num,
     const size_t out_pannel = out_h * out_w * channel;
     const size_t in_pannel = in_h * in_w * channel;
 
-    /// calculate the indices of src.
+    // calculate the indices of src.
     const float sx = inv_trans[0] * static_cast<float>(xIndex) + inv_trans[1] * static_cast<float>(yIndex) + inv_trans[2];
     const float sy = inv_trans[3] * static_cast<float>(xIndex) + inv_trans[4] * static_cast<float>(yIndex) + inv_trans[5];
 
@@ -46,7 +47,7 @@ __global__ void warp_affine_kernel(const int batch_num,
         outIdx = c  + yIndex * out_w * channel + xIndex * channel + batch_id * out_pannel; // NHWC
         if (sx < 0 || sx > in_w || sy < 0|| sy > in_h) {
             dst[outIdx] = 0;
-        } else { //! bilinear interpolation 
+        } else { // bilinear interpolation 
             //const int outIdx = c * out_h * out_w + yIndex * out_w + xIndex + batch_id * out_pannel; // NCHW
             val = h0lambda * (w0lambda * src[batch_id*in_pannel + h1 * in_w * channel + w1 * channel + c] +
                  w1lambda * src[batch_id* in_pannel + h1 * in_w * channel + (w1 + w1p) * channel +  c]) +

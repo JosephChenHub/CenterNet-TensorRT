@@ -4,7 +4,8 @@
 #include <cassert>
 #include <iostream>
 
-//#include <cuda_profiler_api.h> 
+#include "decode.hpp"
+
 
 using namespace std;
 
@@ -271,7 +272,7 @@ __global__ void topk_reduce_blocks(T* data,  size_t* indices,
 
 
 template <typename T1, typename T2>
-T1 divUp(T1 a, T2 b) {
+__inline__ T1 divUp(T1 a, T2 b) {
     return (a + b - 1) / b;
 }
 
@@ -539,11 +540,8 @@ void ctdet_decode(
     if (power_k != K) {
         power_k = 2 << log_k;
     }
-
-    //cudaProfilerStart();
     bitonicLocalSortIndices<float><<<num_blocks, B_THREADS_PER_BLOCK, 0, stream>>>(heat, indices, batch_num, slice_len, padding_len, power_k);
     CHECK_LAST_ERR("ctdet_bitonic_batch_topk_kernel");
-    //cudaProfilerStop();
     /// merge
     merge_batch_topk<float>(heat, indices, batch_num, padding_len, K, num_blocks / batch_num, B_BLOCK_VAR_NUMS, stream);
     CHECK_LAST_ERR("ctdet_merge_batch_topk_kernel");

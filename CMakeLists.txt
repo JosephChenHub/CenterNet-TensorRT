@@ -18,10 +18,12 @@
  # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  # DEALINGS IN THE SOFTWARE.
 
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.10)
 project(trt_infer LANGUAGES CXX C)
 
 set(TRTINFER_ROOT ${PROJECT_SOURCE_DIR})
+
+# two executable files
 set(DET_EXE_NAME ctdet_infer)
 set(POSE_EXE_NAME pose_infer)
 
@@ -32,18 +34,20 @@ set(CMAKE_CXX_STANDARD  11)
 #set(CMAKE_BUILD_TYPE "Debug")
 set(CMAKE_BUILD_TYPE "Release")
 
-set(USE_LIBTORCH OFF)
-set(USE_OPENCV ON)
-set(BUILD_GTEST OFF)
-set(USE_TENSORRT ON)
 
 
 # Enable compiler warnings
 if (CMAKE_BUILD_TYPE MATCHES "Debug")
     set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wall -ggdb -O0 -Wno-deprecated-declarations -Wno-unused-function ")
+    set(USE_LIBTORCH ON)
+    set(USE_GTEST ON)
 else(CMAKE_BUILD_TYPE "Release")
     set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wall -O2 -Wno-deprecated-declarations -Wno-unused-function")
+    set(USE_LIBTORCH OFF)
+    set(USE_GTEST OFF)
 endif()
+set(USE_OPENCV ON)
+set(USE_TENSORRT ON)
 
 
 # Build the libraries with -fPIC
@@ -58,20 +62,18 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 #--------------------------------------------------
 
 set(DET_EXE_SOURCES
-  ${PROJECT_SOURCE_DIR}/src/ctdet_infer.cpp
+  ${PROJECT_SOURCE_DIR}/detection/ctdet_infer.cpp
   ${PROJECT_SOURCE_DIR}/common/logger.cpp
 )
 set(POSE_EXE_SOURCES
-  ${PROJECT_SOURCE_DIR}/src/pose_infer.cpp
+  ${PROJECT_SOURCE_DIR}/pose_estimation/pose_infer.cpp
   ${PROJECT_SOURCE_DIR}/common/logger.cpp
 )
 
 set(CU_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/det_kernels.cu
-    #${PROJECT_SOURCE_DIR}/src/topk_gpu.cu
-    ${PROJECT_SOURCE_DIR}/src/gpu_sort.cu
+    ${PROJECT_SOURCE_DIR}/src/preprocess.cu
+    ${PROJECT_SOURCE_DIR}/src/decode.cu
     ${PROJECT_SOURCE_DIR}/src/custom.cpp
-    #${PROJECT_SOURCE_DIR}/src/warp_affine.cu
 )
 
 set(EXE_INCLUDE
@@ -106,9 +108,10 @@ find_library(TENSORRT_LIBRARY_INFER nvinfer
 find_library(TENSORRT_LIBRARY_INFER_PLUGIN nvinfer_plugin
   HINTS  ${TENSORRT_ROOT} ${TENSORRT_BUILD} ${CUDA_TOOLKIT_ROOT_DIR}
   PATH_SUFFIXES lib lib64 lib/x64)
-#find_library(TENSORRT_LIBRARY_MYELIN myelin
-#  HINTS  ${TENSORRT_ROOT} ${TENSORRT_BUILD} ${CUDA_TOOLKIT_ROOT_DIR}
-#  PATH_SUFFIXES lib lib64 lib/x64)
+# for TensorRT 5, comment the following three lines
+find_library(TENSORRT_LIBRARY_MYELIN myelin
+  HINTS  ${TENSORRT_ROOT} ${TENSORRT_BUILD} ${CUDA_TOOLKIT_ROOT_DIR}
+  PATH_SUFFIXES lib lib64 lib/x64)
 set(TENSORRT_LIBRARY ${TENSORRT_LIBRARY_INFER} ${TENSORRT_LIBRARY_INFER_PLUGIN}) # ${TENSORRT_LIBRARY_MYELIN})
 MESSAGE(STATUS "Find TensorRT libs at ${TENSORRT_LIBRARY}")
 find_package_handle_standard_args(
@@ -132,7 +135,12 @@ endif(USE_OPENCV)
 include_directories(${TENSORRT_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
 
 # CUDA
-list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda --expt-relaxed-constexpr -std=c++11 -O2")
+if (CMAKE_BUILD_TYPE MATCHES "Debug")
+    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda --expt-relaxed-constexpr -std=c++11 -O0 -g")
+else(CMAKE_BUILD_TYPE "Release")
+    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda --expt-relaxed-constexpr -std=c++11 -O2")
+endif()
+
 CUDA_INCLUDE_DIRECTORIES(${CUDNN_INCLUDE_DIR} ${TENSORRT_INCLUDE_DIR})
 CUDA_ADD_LIBRARY(cu_lib SHARED ${CU_SOURCES})
 target_link_libraries(cu_lib ${OpenCV_LIBS})
@@ -144,7 +152,6 @@ if(USE_LIBTORCH)
     find_package(Torch REQUIRED)
     message("TORCH_CXX_FLAGS:${TORCH_CXX_FLAGS}!")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
-    #set(CMAKE_CXX_STANDARD 14)
     message("Torch libs:${TORCH_LIBRARIES}")
     message("Torch flags:${TORCH_CXX_FLAGS}")
     message("CMAKE_CXX_FLAGS:${CMAKE_CXX_FLAGS}")
@@ -156,36 +163,38 @@ endif()
 # --------------------------------
 # GTEST
 # --------------------------------
-if(BUILD_GTEST)
+if(USE_GTEST)
     find_package(GTest REQUIRED)
     if(GTest_FOUND)
         message("Found GTest!")
     endif()
     set(KERNEL_NAME modules)
-    set(GTEST_LISTS
-        ${PROJECT_SOURCE_DIR}/src/test.cc
-        ${PROJECT_SOURCE_DIR}/src/topk_cpu.cpp
+    set(GTEST_CPP_SRC
+        ${PROJECT_SOURCE_DIR}/test/test.cc
+        ${PROJECT_SOURCE_DIR}/test/topk_cpu.cpp
         ${PROJECT_SOURCE_DIR}/src/custom.cpp
         )
-endif()
+    set(GTEST_CUDA_SRC
+        ${PROJECT_SOURCE_DIR}/test/topk_gpu.cu
+        ${PROJECT_SOURCE_DIR}/test/warp_affine.cu
+    )
+    message("GTEST_CPP_SOURCES:${GTEST_CPP_SRC}")
+    message("GTEST_CUDA_SOURCES:${GTEST_CUDA_SRC}")
 
-if(BUILD_GTEST)
-        message("GTEST_SOURCES:${GTEST_SOURCES}")
-        #foreach(GTEST_LISTS ${GTEST_SOURCES})
-            message("Found GTest sources:${GTEST_LISTS}")
-            add_executable(gtest_${KERNEL_NAME} ${GTEST_LISTS})
+    CUDA_ADD_LIBRARY(test_cu_lib SHARED ${GTEST_CUDA_SRC})
+    target_include_directories(test_cu_lib PUBLIC ${CU_INCLUDE})
 
-            target_include_directories(gtest_${KERNEL_NAME} PUBLIC ${OpenCV_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/include)
-		    target_link_libraries(gtest_${KERNEL_NAME} ${OpenCV_LIBS} cu_lib)
-		    if(USE_LIBTORCH)
-		        target_link_libraries(gtest_${KERNEL_NAME} ${TORCH_LIBRARIES} ${CUDA_LIBRARIES})
-	        else(NOT USE_LIBTORCH)
-                target_link_libraries(gtest_${KERNEL_NAME} ${CUDA_LIBRARIES})
-		    endif(USE_LIBTORCH)
+    add_executable(gtest_${KERNEL_NAME} ${GTEST_CPP_SRC})
+    target_include_directories(gtest_${KERNEL_NAME} PUBLIC ${OpenCV_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(gtest_${KERNEL_NAME} ${OpenCV_LIBS} cu_lib test_cu_lib)
+    if(USE_LIBTORCH)
+        target_link_libraries(gtest_${KERNEL_NAME} ${TORCH_LIBRARIES} ${CUDA_LIBRARIES})
+    else(NOT USE_LIBTORCH)
+        target_link_libraries(gtest_${KERNEL_NAME} ${CUDA_LIBRARIES})
+    endif(USE_LIBTORCH)
 
-            target_link_libraries(gtest_${KERNEL_NAME} GTest::GTest GTest::Main)
-            add_test(AllTestsInFoo gtest_${KERNEL_NAME})
-            #endforeach(GTEST_LISTS)
+    target_link_libraries(gtest_${KERNEL_NAME} GTest::GTest GTest::Main)
+    add_test(AllTestsInFoo gtest_${KERNEL_NAME})
 endif()
 
 
