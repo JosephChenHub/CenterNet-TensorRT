@@ -1,17 +1,20 @@
 #include "process.hpp"
 
 
+/// 
+/// \brief Do the pre-processing operation used in the CenterNet. 
 /// warpAffine: src -> dst, since the traversal locates on dst rather than src,
 /// we need the inverse transformation matrix
 /// dst = trans * src, src = inv_trans * dst  
-
-/// src: NHWC, dst:NCHW, keep BGR format
+/// \param src: NHWC, dst:NCHW, keep BGR format
+///        inv_trans: the transformation matrix (2*3)
+///         
 template <typename T>
 __global__ void centernet_preprocess_kernel(const T* src,  
         const int batch_size, const int channel, 
         const int in_h, const int in_w, 
         float* dst, const int out_h, const int out_w, 
-        const float* inv_trans,
+        const float* inv_trans,  
         const float* mean, const bool mean_valid,
         const float* std,  const bool std_valid) {
 
