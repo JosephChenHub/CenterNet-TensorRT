@@ -9,10 +9,14 @@
 
 using namespace std;
 
-#define B_BLOCK_VAR_NUMS 256 // each block process 512 numbers
-#define B_ELEM_PT 4 // each thread read 4 var. first
 
-const int B_THREADS_PER_BLOCK = B_BLOCK_VAR_NUMS / B_ELEM_PT;
+#define B_ELEM_PT 16 // each thread process 16 var. firstly
+#define B_ELEM_BITSHIFT 4 // log2(B_ELEM_PT)
+
+#define B_THREADS_PER_BLOCK  64
+#define B_BLOCK_VAR_NUMS (B_ELEM_PT*B_THREADS_PER_BLOCK)
+
+
 
 template <typename T>
 __forceinline__ __device__ void compAndSwapIndices(T* data, size_t* indices, 
@@ -81,99 +85,90 @@ template <typename T>
 __global__ void bitonicLocalSortIndices(T* data, size_t* indices, const int batch_num,
         const size_t slice_len, const size_t padding_len, 
         const int K) {
-    const size_t tid = threadIdx.x;
-    const size_t gid = threadIdx.x + blockIdx.x * blockDim.x;
+    const int tid = threadIdx.x;
+    const int gid = threadIdx.x + blockIdx.x * blockDim.x;
 
-    size_t g_addr, t_addr;
-    size_t index; 
     __shared__ T smem[B_BLOCK_VAR_NUMS]; 
     __shared__ size_t sind[B_BLOCK_VAR_NUMS];
 
+    int t_addr = tid << B_ELEM_BITSHIFT;
+    int g_addr = gid << B_ELEM_BITSHIFT; 
 
+    bool ascending;
+
+    // we firt read the global mem. to the buffer. 
+    T rx[B_ELEM_PT];
+    size_t ri[B_ELEM_PT];
     for(int i = 0; i < B_ELEM_PT; ++i) {
-        g_addr = gid * B_ELEM_PT + i;
-        t_addr = tid * B_ELEM_PT + i;
-        index = g_addr % padding_len;
+        size_t index = (g_addr+i) % padding_len;
         if (index < slice_len ) {
-            smem[t_addr] = data[g_addr];
-            sind[t_addr] = index;
+            rx[i] = data[g_addr + i];
+            ri[i] = index;
         }
         else {
-            set_data(smem[t_addr], INT_MIN*1.0);
-            sind[t_addr] = INT_MAX;
+            rx[i] = INT_MIN*1.0;
+            ri[i] = INT_MAX;
         }
     }
-    __syncthreads();
-    int seg_num = blockDim.x * B_ELEM_PT / K;
-    /// sort from K*i~K*(i+1), i:[0, seg_num-1] down-down-up-up
 
-    T* sdata = smem + tid * B_ELEM_PT;
-    size_t* sidx  = sind + tid * B_ELEM_PT; 
-    /// 4-group
-    bool ascending = false;
-    B2GI(sdata, sidx, 0)
-        ascending ^= 1;
-    B2GI(sdata, sidx, 2)
-        ascending ^= 1;
-    __syncthreads();
-    if (tid % 2 == 0 ) { //8-group
-        B4GI(sdata, sidx, 0)
-            ascending ^= 1;
-        B4GI(sdata, sidx, 4)
-            ascending ^= 1;
+    ascending = false;
+    for(int i = 0; i < B_ELEM_PT; i += 2) {
+	B2GI(rx, ri, i); 
+	ascending ^= 1;
+    }
+    for(int i = 0; i < B_ELEM_PT; i += 4) {
+	B4GI(rx, ri, i);
+	ascending ^= 1;
+    }
+    for(int i = 0; i < B_ELEM_PT; i += 8) {
+	B8GI(rx, ri, i);
+	ascending ^= 1;
+    }
+
+    // write to the shared memory 
+    for(int i = 0; i < B_ELEM_PT; ++i) {
+	smem[t_addr + i] = rx[i];
+	sind[t_addr + i] = ri[i];
     }
     __syncthreads();
-    if (tid % 4 == 0 ) { // 16-group
-        B8GI(sdata, sidx, 0)
-            ascending ^= 1;
-        B8GI(sdata, sidx, 8)
-            ascending ^= 1;
-    }
-    __syncthreads();
-    if (tid % 8 == 0 ) { // 32-group
-        B16GI(sdata, sidx, 0)
-            ascending ^= 1;
-        B16GI(sdata, sidx, 16)
-            ascending ^= 1;
-    }
-    __syncthreads();
-    if (tid % 16 == 0 ) { //64-group
-        B32GI(sdata, sidx, 0)
-            ascending ^= 1;
-        B32GI(sdata, sidx, 32)
-            ascending ^= 1;
-    }
-    __syncthreads();
-    if (tid % 32 == 0 ) { //128-group
-        B64GI(sdata, sidx, 0)
-            ascending ^= 1;
-        B64GI(sdata,  sidx, 64)
-            ascending ^= 1;
-    }
-    __syncthreads();
-    if (tid % 64 == 0 ) { // 256-group
-        B128GI(sdata, sidx, 0)
-            ascending ^= 1;
-        B128GI(sdata, sidx, 128)
-            ascending ^= 1;
-    }
-    __syncthreads();
-    ///if (tid == 0) B256GI(sdata, sidx, 0)
-    ///__syncthreads();
+
+   T* sdata = smem + t_addr;
+   size_t * sidx = sind + t_addr;
+   ascending = tid & 1;
+   B16GI(sdata, sidx, 0);
+   __syncthreads();
+
+   if (tid % 2 == 0 ) {
+      ascending = (tid >> 1) & 1;
+      B32GI(sdata, sidx, 0); 
+   }
+   __syncthreads();
+   if (tid % 4 == 0 ) {
+      ascending = (tid >> 2) & 1;
+      B64GI(sdata, sidx, 0);
+   }
+   __syncthreads();
+   if (tid % 8 == 0 ) {
+      ascending = (tid >> 3) & 1;
+      B128GI(sdata, sidx, 0); 
+   }
+   __syncthreads();
 
 
     /// merge  down-up-down-up-down-up-down-up
     ///        down-up-down-up
     ///        down-up
     ///        down
+
+    int seg_num = blockDim.x * B_ELEM_PT / K;
     size_t lo, hi;
     for( ; seg_num > 1; )  {
         if (tid < seg_num>> 1) {
             lo = K * tid; 
             hi = (seg_num - 1 - tid) * K;
 
-            for(int j = 0; j < K; ++j) compAndSwapIndices(smem, sind, lo + j, hi + j, false);
-            ascending = (tid % 2 != 0);
+            for(int j = 0; j < K; ++j) compAndSwap(smem, sind, lo + j, hi + j, false);
+            ascending = tid & 1;
             B128GI(smem, sind, lo);
          } 
         seg_num >>= 1;
@@ -187,7 +182,6 @@ __global__ void bitonicLocalSortIndices(T* data, size_t* indices, const int batc
     }
 
 }
-
 
 
 
