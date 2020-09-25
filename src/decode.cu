@@ -167,7 +167,7 @@ __global__ void bitonicLocalSortIndices(T* data, size_t* indices, const int batc
             lo = K * tid; 
             hi = (seg_num - 1 - tid) * K;
 
-            for(int j = 0; j < K; ++j) compAndSwap(smem, sind, lo + j, hi + j, false);
+            for(int j = 0; j < K; ++j) compAndSwapIndices(smem, sind, lo + j, hi + j, false);
             ascending = tid & 1;
             B128GI(smem, sind, lo);
          } 
