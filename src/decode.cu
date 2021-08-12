@@ -349,18 +349,21 @@ __global__ void ctdet_decode_kernel(
         float* det, 
         float* scores, size_t* indices, float* wh, float* reg,  
         float* trans,
-        const int batch_num, const size_t slice_blocks_num, 
+        const int batch_num, const int num_classes, const size_t slice_blocks_num, 
         const size_t block_var_num, const int K, 
         const int height, const int width, 
         const bool reg_exist,  const float thresh
         ) {
     const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
     if (tid >= batch_num * K) return;
-    if (scores[tid] < thresh) return;  //no nms, directly using threshold
+//    if (scores[tid] < thresh) return;  //no nms, directly using threshold
 
     const size_t area  = height * width;
     const size_t batch_id = tid / K;
     const size_t local_id = tid % K;
+
+    float score = scores[batch_id * area * num_classes + local_id];
+    if (score < thresh) return; // no nms
 
     const size_t iid = slice_blocks_num * block_var_num * batch_id + local_id;
     const int batch_len = 1 + 6 * K;  
@@ -401,7 +404,7 @@ __global__ void ctdet_decode_kernel(
     /// det: N* (1 + 6*K)
 
     det[batch_id * batch_len + local_id * 6 + 0 + 1] = class_id;
-    det[batch_id * batch_len + local_id * 6 + 1 + 1] = scores[tid];
+    det[batch_id * batch_len + local_id * 6 + 1 + 1] = score;
     det[batch_id * batch_len + local_id * 6 + 2 + 1] = tt0;
     det[batch_id * batch_len + local_id * 6 + 3 + 1] = tt1;
     det[batch_id * batch_len + local_id * 6 + 4 + 1] = tt2;
@@ -423,7 +426,7 @@ __global__ void pose_decode_kernel(
         ) {
     const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
     if (tid >= batch_num * K) return;
-    if (scores[tid] < thresh) return;  //! no nms, directly using threshold
+//    if (scores[tid] < thresh) return;  //! no nms, directly using threshold
 
     const int res_num = 2 + 4 + num_joints * 2;
     const int batch_len = (1 + res_num * K);
@@ -431,6 +434,9 @@ __global__ void pose_decode_kernel(
     const size_t area  = height * width;
     const size_t batch_id = tid / K;
     const size_t local_id = tid % K;
+    float score = scores[batch_id * area  + local_id];
+    if (score < thresh) return;  // no nms
+
     atomicAdd(&det[batch_id * batch_len], 1.0); //! number of det
 
     const size_t iid = slice_blocks_num * block_var_num * batch_id + local_id;
@@ -466,7 +472,7 @@ __global__ void pose_decode_kernel(
     tt2 = trans[0] * t2 + trans[1] * t3 + trans[2];
     tt3 = trans[3] * t2 + trans[4] * t3 + trans[5];
     det[batch_id * batch_len + local_id * res_num + 0 + 1] = class_id;
-    det[batch_id * batch_len + local_id * res_num + 1 + 1] = scores[tid];
+    det[batch_id * batch_len + local_id * res_num + 1 + 1] = score; 
     det[batch_id * batch_len + local_id * res_num + 2 + 1] = tt0;
     det[batch_id * batch_len + local_id * res_num + 3 + 1] = tt1;
     det[batch_id * batch_len + local_id * res_num + 4 + 1] = tt2;
@@ -543,7 +549,7 @@ void ctdet_decode(
     ctdet_decode_kernel<<<divUp(K * batch_num, 128), 128, 0, stream>>>(
             det, heat, indices, 
             wh, reg, inv_trans,    
-            batch_num, num_blocks/batch_num, 
+            batch_num, num_classes, num_blocks/batch_num, 
             B_BLOCK_VAR_NUMS, K, height, width, reg_exist,
             threshold);
 

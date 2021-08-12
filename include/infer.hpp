@@ -41,7 +41,7 @@ public:
         _net_out_hw[0] = _runtime_input_dims[2] / _down_ratio; // TODO: how about ratio is float point?
         _net_out_hw[1] = _runtime_input_dims[3] / _down_ratio;
 
-	    mem_alloc();
+	mem_alloc();
 
         // calculate the affine transform matrix
         float center[2], scale[2];
@@ -58,7 +58,7 @@ public:
         CHECK_CUDA(cudaMallocHost((void**)&_h_det, sizeof(float) * _det_len * _batch_size));
         CHECK_CUDA(cudaMemset(_d_det, 0, sizeof(float) * _det_len * _batch_size));
 
-	    _mem_initialized = true;
+	_mem_initialized = true;
     }
     ~TRTCenterNetDet() {  
         CHECK_CUDA(cudaFreeHost(_h_det));
@@ -72,6 +72,7 @@ protected:
                 _runtime_input_dims[2], _runtime_input_dims[3], 
                 _d_inv_trans, nullptr, true, nullptr, true, 
                 stream);
+
     }
 
     void post_process(cudaStream_t stream) override {
