@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <vector>
 
-#define MAX_BATCH_SIZE 2
+#define MAX_BATCH_SIZE 32
 //#define USE_D_ONES
 
 #define CHECK_CUDA(e) { if(e != cudaSuccess) { \
